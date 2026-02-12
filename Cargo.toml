@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/a2a-types",
+    "crates/a2a-server",
+    "crates/a2a-client",
+    "crates/a2a-integration-tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Internal
+a2a-types = { path = "crates/a2a-types" }
+a2a-server = { path = "crates/a2a-server" }
+a2a-client = { path = "crates/a2a-client" }
+
+# Shared
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+thiserror = "2"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+bytes = "1"
+futures-core = "0.3"
+tokio-stream = "0.1"
+async-trait = "0.1"
+
+# Server
+axum = "0.8"
+
+# Client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
