@@ -168,4 +168,156 @@ mod tests {
         assert_eq!(err.code, -32603);
         assert_eq!(err.message, "Internal error");
     }
+
+    #[test]
+    fn test_a2a_error_with_data() {
+        let err = A2AError::new(A2AErrorCode::TaskNotFound, "not found")
+            .with_data(serde_json::json!({"task_id": "t-1", "searched": true}));
+
+        assert!(err.data.is_some());
+        assert_eq!(err.data.as_ref().unwrap()["task_id"], "t-1");
+
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"data\""));
+        assert!(json.contains("t-1"));
+
+        let deserialized: A2AError = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.data.as_ref().unwrap()["searched"], true);
+    }
+
+    #[test]
+    fn test_a2a_error_display() {
+        let err = A2AError::new(A2AErrorCode::TaskNotFound, "Task xyz not found");
+        let display = format!("{err}");
+        assert!(display.contains("-32001"));
+        assert!(display.contains("Task xyz not found"));
+    }
+
+    #[test]
+    fn test_a2a_error_error_code_method() {
+        let err = A2AError::new(A2AErrorCode::Unauthorized, "no access");
+        assert_eq!(err.error_code(), Some(A2AErrorCode::Unauthorized));
+
+        let unknown_err = A2AError {
+            code: -99999,
+            message: "unknown".into(),
+            data: None,
+        };
+        assert_eq!(unknown_err.error_code(), None);
+    }
+
+    #[test]
+    fn test_all_error_codes_roundtrip() {
+        let codes = vec![
+            A2AErrorCode::ParseError,
+            A2AErrorCode::InvalidRequest,
+            A2AErrorCode::MethodNotFound,
+            A2AErrorCode::InvalidParams,
+            A2AErrorCode::InternalError,
+            A2AErrorCode::TaskNotFound,
+            A2AErrorCode::TaskNotCancelable,
+            A2AErrorCode::PushNotSupported,
+            A2AErrorCode::UnsupportedOperation,
+            A2AErrorCode::IncompatibleContentTypes,
+            A2AErrorCode::ExtensionsNotSupported,
+            A2AErrorCode::AgentCardNotFound,
+            A2AErrorCode::Unauthenticated,
+            A2AErrorCode::Unauthorized,
+        ];
+
+        for code in codes {
+            let numeric = code.code();
+            let recovered = A2AErrorCode::from_code(numeric);
+            assert_eq!(
+                recovered,
+                Some(code),
+                "Round-trip failed for code {numeric}"
+            );
+
+            // Also test that default_message is non-empty
+            assert!(
+                !code.default_message().is_empty(),
+                "Empty default message for {code:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_a2a_error_no_data_omitted_in_json() {
+        let err = A2AError::new(A2AErrorCode::TaskNotFound, "not found");
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(!json.contains("\"data\""), "data field should be omitted when None");
+    }
+
+    #[test]
+    fn test_a2a_error_from_raw_json() {
+        let json = r#"{"code": -32001, "message": "Task not found"}"#;
+        let err: A2AError = serde_json::from_str(json).unwrap();
+        assert_eq!(err.code, -32001);
+        assert_eq!(err.message, "Task not found");
+        assert!(err.data.is_none());
+        assert_eq!(err.error_code(), Some(A2AErrorCode::TaskNotFound));
+    }
+
+    #[test]
+    fn test_a2a_error_from_raw_json_with_data() {
+        let json = r#"{"code": -32603, "message": "Internal error", "data": {"detail": "stack overflow"}}"#;
+        let err: A2AError = serde_json::from_str(json).unwrap();
+        assert_eq!(err.code, -32603);
+        assert!(err.data.is_some());
+        assert_eq!(err.data.unwrap()["detail"], "stack overflow");
+    }
+
+    #[test]
+    fn test_a2a_error_auth_error_codes() {
+        // Verify auth-specific error codes are distinct from standard and A2A codes
+        let unauth = A2AErrorCode::Unauthenticated;
+        let unaz = A2AErrorCode::Unauthorized;
+
+        assert_eq!(unauth.code(), -31401);
+        assert_eq!(unaz.code(), -31403);
+        assert_eq!(unauth.default_message(), "Unauthenticated");
+        assert_eq!(unaz.default_message(), "Unauthorized");
+
+        // Verify they roundtrip via A2AError
+        let err1 = A2AError::from(unauth);
+        let err2 = A2AError::from(unaz);
+        assert_eq!(err1.error_code(), Some(A2AErrorCode::Unauthenticated));
+        assert_eq!(err2.error_code(), Some(A2AErrorCode::Unauthorized));
+
+        // Verify JSON roundtrip
+        let json1 = serde_json::to_string(&err1).unwrap();
+        let deser1: A2AError = serde_json::from_str(&json1).unwrap();
+        assert_eq!(deser1.code, -31401);
+        assert_eq!(deser1.error_code(), Some(A2AErrorCode::Unauthenticated));
+    }
+
+    #[test]
+    fn test_a2a_error_chained_with_data() {
+        // Test chaining with_data on From<A2AErrorCode>
+        let err = A2AError::from(A2AErrorCode::PushNotSupported)
+            .with_data(serde_json::json!({
+                "reason": "Server does not support push notifications",
+                "supported_features": ["streaming", "blocking"]
+            }));
+
+        assert_eq!(err.code, -32003);
+        assert_eq!(err.message, "Push notifications not supported");
+        let data = err.data.as_ref().unwrap();
+        assert_eq!(data["reason"], "Server does not support push notifications");
+        assert_eq!(data["supported_features"].as_array().unwrap().len(), 2);
+
+        // Verify JSON roundtrip preserves data
+        let json = serde_json::to_string(&err).unwrap();
+        let deser: A2AError = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.error_code(), Some(A2AErrorCode::PushNotSupported));
+        assert!(deser.data.is_some());
+    }
+
+    #[test]
+    fn test_a2a_error_is_std_error() {
+        let err = A2AError::new(A2AErrorCode::InternalError, "boom");
+        // Ensure it implements std::error::Error
+        let _: &dyn std::error::Error = &err;
+    }
 }

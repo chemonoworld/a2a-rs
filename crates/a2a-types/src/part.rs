@@ -233,4 +233,229 @@ mod tests {
         let deserialized: Part = serde_json::from_str(&json).unwrap();
         assert!(deserialized.metadata.is_some());
     }
+
+    #[test]
+    fn test_raw_empty_bytes() {
+        let part = Part {
+            content: PartContent::Raw {
+                raw: vec![],
+            },
+            metadata: None,
+            filename: None,
+            media_type: None,
+        };
+
+        let json = serde_json::to_string(&part).unwrap();
+        let deserialized: Part = serde_json::from_str(&json).unwrap();
+        match &deserialized.content {
+            PartContent::Raw { raw } => assert!(raw.is_empty()),
+            _ => panic!("Expected Raw content"),
+        }
+    }
+
+    #[test]
+    fn test_data_part_with_array() {
+        let part = Part {
+            content: PartContent::Data {
+                data: serde_json::json!([1, 2, 3, "four"]),
+            },
+            metadata: None,
+            filename: None,
+            media_type: Some("application/json".into()),
+        };
+
+        let json = serde_json::to_string(&part).unwrap();
+        let deserialized: Part = serde_json::from_str(&json).unwrap();
+        match &deserialized.content {
+            PartContent::Data { data } => {
+                assert!(data.is_array());
+                assert_eq!(data.as_array().unwrap().len(), 4);
+            }
+            _ => panic!("Expected Data content"),
+        }
+    }
+
+    #[test]
+    fn test_data_part_with_string_value() {
+        // Data can be any JSON value, not just objects
+        let part = Part {
+            content: PartContent::Data {
+                data: serde_json::json!("just a string"),
+            },
+            metadata: None,
+            filename: None,
+            media_type: None,
+        };
+
+        let json = serde_json::to_string(&part).unwrap();
+        let deserialized: Part = serde_json::from_str(&json).unwrap();
+        match &deserialized.content {
+            PartContent::Data { data } => {
+                assert_eq!(data.as_str(), Some("just a string"));
+            }
+            _ => panic!("Expected Data content"),
+        }
+    }
+
+    #[test]
+    fn test_url_part_with_all_fields() {
+        let part = Part {
+            content: PartContent::Url {
+                url: "https://cdn.example.com/images/photo.jpg".into(),
+            },
+            metadata: Some(serde_json::json!({"width": 1920, "height": 1080})),
+            filename: Some("photo.jpg".into()),
+            media_type: Some("image/jpeg".into()),
+        };
+
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("\"url\":"));
+        assert!(json.contains("\"metadata\":"));
+        assert!(json.contains("\"filename\":"));
+        assert!(json.contains("\"mediaType\":"));
+
+        let deserialized: Part = serde_json::from_str(&json).unwrap();
+        match &deserialized.content {
+            PartContent::Url { url } => {
+                assert!(url.contains("photo.jpg"));
+            }
+            _ => panic!("Expected Url content"),
+        }
+        assert_eq!(deserialized.metadata.as_ref().unwrap()["width"], 1920);
+        assert_eq!(deserialized.filename.as_deref(), Some("photo.jpg"));
+        assert_eq!(deserialized.media_type.as_deref(), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn test_part_from_raw_json_text() {
+        let json = r#"{"text": "hello world"}"#;
+        let part: Part = serde_json::from_str(json).unwrap();
+        match &part.content {
+            PartContent::Text { text } => assert_eq!(text, "hello world"),
+            _ => panic!("Expected Text content"),
+        }
+        assert!(part.metadata.is_none());
+        assert!(part.filename.is_none());
+        assert!(part.media_type.is_none());
+    }
+
+    #[test]
+    fn test_part_from_raw_json_with_all_optional_fields() {
+        let json = r#"{
+            "text": "Hello with extras",
+            "metadata": {"priority": "high", "score": 0.99},
+            "filename": "greeting.txt",
+            "mediaType": "text/plain"
+        }"#;
+
+        let part: Part = serde_json::from_str(json).unwrap();
+        match &part.content {
+            PartContent::Text { text } => assert_eq!(text, "Hello with extras"),
+            _ => panic!("Expected Text content"),
+        }
+        assert_eq!(part.metadata.as_ref().unwrap()["priority"], "high");
+        assert_eq!(part.metadata.as_ref().unwrap()["score"], 0.99);
+        assert_eq!(part.filename.as_deref(), Some("greeting.txt"));
+        assert_eq!(part.media_type.as_deref(), Some("text/plain"));
+    }
+
+    #[test]
+    fn test_part_from_raw_json_url_with_metadata() {
+        let json = r#"{
+            "url": "https://storage.example.com/files/report.pdf",
+            "filename": "report.pdf",
+            "mediaType": "application/pdf",
+            "metadata": {"size": 1024000, "pages": 42}
+        }"#;
+
+        let part: Part = serde_json::from_str(json).unwrap();
+        match &part.content {
+            PartContent::Url { url } => {
+                assert!(url.contains("report.pdf"));
+            }
+            _ => panic!("Expected Url content"),
+        }
+        assert_eq!(part.filename.as_deref(), Some("report.pdf"));
+        assert_eq!(part.media_type.as_deref(), Some("application/pdf"));
+        assert_eq!(part.metadata.as_ref().unwrap()["size"], 1024000);
+        assert_eq!(part.metadata.as_ref().unwrap()["pages"], 42);
+    }
+
+    #[test]
+    fn test_raw_part_roundtrip_various_lengths() {
+        // Test base64 encode/decode via Part serde for different lengths
+        for len in [0_usize, 1, 2, 3, 4, 5, 6, 100, 255] {
+            let original: Vec<u8> = (0..len).map(|i| (i % 256) as u8).collect();
+            let part = Part {
+                content: PartContent::Raw {
+                    raw: original.clone(),
+                },
+                metadata: None,
+                filename: None,
+                media_type: None,
+            };
+
+            let json = serde_json::to_string(&part).unwrap();
+            let deserialized: Part = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("Failed to deserialize for length {len}: {e}"));
+
+            match &deserialized.content {
+                PartContent::Raw { raw } => {
+                    assert_eq!(raw, &original, "Raw roundtrip failed for length {len}");
+                }
+                _ => panic!("Expected Raw content for length {len}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_ambiguous_json_with_text_and_url_deserializes_as_text() {
+        // When JSON has both "text" and "url", serde untagged tries Text first (order matters)
+        let json = r#"{"text": "hello", "url": "https://example.com"}"#;
+        let part: Part = serde_json::from_str(json).unwrap();
+        match &part.content {
+            PartContent::Text { text } => assert_eq!(text, "hello"),
+            _ => panic!("Expected Text variant (untagged serde tries in order)"),
+        }
+    }
+
+    #[test]
+    fn test_part_with_null_metadata() {
+        // Explicit null metadata in JSON should deserialize as Some(null)
+        let json = r#"{"text": "hello", "metadata": null}"#;
+        let part: Part = serde_json::from_str(json).unwrap();
+        match &part.content {
+            PartContent::Text { text } => assert_eq!(text, "hello"),
+            _ => panic!("Expected Text part"),
+        }
+        // serde treats null as the deserialized value for Option<Value>
+        // This can be Some(Value::Null) or None depending on config
+        // The important thing is it doesn't error
+    }
+
+    #[test]
+    fn test_data_part_with_nested_complex_object() {
+        let json = r#"{
+            "data": {
+                "users": [
+                    {"name": "Alice", "roles": ["admin", "user"]},
+                    {"name": "Bob", "roles": ["user"]}
+                ],
+                "pagination": {"page": 1, "total": 42},
+                "flags": {"active": true, "beta": false}
+            },
+            "mediaType": "application/json"
+        }"#;
+        let part: Part = serde_json::from_str(json).unwrap();
+        match &part.content {
+            PartContent::Data { data } => {
+                assert_eq!(data["users"][0]["name"], "Alice");
+                assert_eq!(data["users"][1]["roles"][0], "user");
+                assert_eq!(data["pagination"]["total"], 42);
+                assert_eq!(data["flags"]["active"], true);
+            }
+            _ => panic!("Expected Data part"),
+        }
+        assert_eq!(part.media_type.as_deref(), Some("application/json"));
+    }
 }

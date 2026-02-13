@@ -21,6 +21,8 @@ async-trait.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [[example]]
 name = "helloworld-server"

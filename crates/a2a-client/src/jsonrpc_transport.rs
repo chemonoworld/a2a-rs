@@ -121,3 +121,82 @@ impl Transport for JsonRpcTransport {
         self.send_jsonrpc_stream("tasks/resubscribe", request).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transport_new_creates_successfully() {
+        let transport = JsonRpcTransport::new("http://localhost:3000");
+        assert!(transport.is_ok());
+    }
+
+    #[test]
+    fn test_transport_id_starts_at_one() {
+        let transport = JsonRpcTransport::new("http://localhost:3000").unwrap();
+        assert_eq!(transport.next_id(), 1);
+    }
+
+    #[test]
+    fn test_transport_id_increments() {
+        let transport = JsonRpcTransport::new("http://localhost:3000").unwrap();
+        let id1 = transport.next_id();
+        let id2 = transport.next_id();
+        let id3 = transport.next_id();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+    }
+
+    #[test]
+    fn test_transport_stores_url() {
+        let transport = JsonRpcTransport::new("http://example.com:8080/rpc").unwrap();
+        assert_eq!(transport.url, "http://example.com:8080/rpc");
+    }
+
+    #[test]
+    fn test_transport_next_id_concurrent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let transport = Arc::new(JsonRpcTransport::new("http://localhost:3000").unwrap());
+        let mut handles = vec![];
+
+        for _ in 0..10 {
+            let t = transport.clone();
+            handles.push(thread::spawn(move || t.next_id()));
+        }
+
+        let mut ids: Vec<i64> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        ids.sort();
+        ids.dedup();
+        // All 10 IDs should be unique
+        assert_eq!(ids.len(), 10, "All concurrent IDs should be unique");
+        // IDs should be in range 1..=10
+        assert_eq!(*ids.first().unwrap(), 1);
+        assert_eq!(*ids.last().unwrap(), 10);
+    }
+
+    #[test]
+    fn test_transport_url_with_query_params() {
+        let url = "http://example.com:8080/rpc?key=value&token=abc";
+        let transport = JsonRpcTransport::new(url).unwrap();
+        assert_eq!(transport.url, url);
+    }
+
+    #[test]
+    fn test_transport_url_various_formats() {
+        // Trailing slash
+        let t1 = JsonRpcTransport::new("http://localhost:3000/").unwrap();
+        assert_eq!(t1.url, "http://localhost:3000/");
+
+        // HTTPS
+        let t2 = JsonRpcTransport::new("https://agent.example.com/v1/rpc").unwrap();
+        assert_eq!(t2.url, "https://agent.example.com/v1/rpc");
+
+        // With fragment
+        let t3 = JsonRpcTransport::new("http://localhost:3000/rpc#section").unwrap();
+        assert_eq!(t3.url, "http://localhost:3000/rpc#section");
+    }
+}
