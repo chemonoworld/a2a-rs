@@ -1,0 +1,19 @@
+[package]
+name = "a2a-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Integration tests for a2a-rs (server + client)"
+
+[dev-dependencies]
+a2a-types.workspace = true
+a2a-server.workspace = true
+a2a-client.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tokio-stream.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
